@@ -1,0 +1,13 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+*.o
+*.swp
+
+# macOS
+.DS_Store
+
+# Build output
+KillPort.app/
+DerivedData/
