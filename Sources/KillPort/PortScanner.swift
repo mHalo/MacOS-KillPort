@@ -123,7 +123,7 @@ final class PortScanner: Sendable {
     ///
     /// - Parameter line: A single line of lsof output (not the header).
     /// - Returns: A `PortProcess` if parsing succeeds, `nil` otherwise.
-    private func parseLsofLine(_ line: String) -> PortProcess? {
+    func parseLsofLine(_ line: String) -> PortProcess? {
         let tokens = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
 
         // We need at minimum: COMMAND, PID, USER, FD, TYPE, DEVICE, SIZE/OFF, NODE, NAME
