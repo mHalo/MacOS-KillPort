@@ -452,10 +452,19 @@ struct ProcessCardView: View {
 
             // Process details
             VStack(alignment: .leading, spacing: 4) {
+                // Allow long process names to wrap onto a second line instead of
+                // being truncated. `minimumScaleFactor` first attempts to shrink the
+                // font slightly before wrapping; `fixedSize(vertical: true)` lets the
+                // text expand vertically so it is never clipped. A hover tooltip shows
+                // the full command for anything still ellipsized at 2 lines.
                 Text(process.command)
                     .font(.callout)
                     .fontWeight(.semibold)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help(process.command)
 
                 infoRow(label: "PID", value: "\(process.pid)")
                 infoRow(label: "用户", value: process.user)
