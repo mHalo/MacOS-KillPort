@@ -1,0 +1,66 @@
+# =============================================================================
+# KillPort Release Workflow
+# =============================================================================
+# Triggers when a version tag (v*) is pushed. Builds the app on a macOS
+# runner, packages it into a .app bundle (reusing Scripts/build.sh), zips the
+# bundle, and publishes a GitHub Release with the artifact attached.
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Grant the workflow permission to create releases.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build & package .app bundle
+        run: ./Scripts/build.sh
+
+      - name: Zip the .app bundle
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          ditto -c -k --keepParent KillPort.app "KillPort-${{ github.ref_name }}.zip"
+          echo "Zipped artifact:"
+          ls -lh "KillPort-${{ github.ref_name }}.zip"
+
+      - name: Create GitHub Release & upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: KillPort ${{ github.ref_name }}
+          files: KillPort-${{ github.ref_name }}.zip
+          generate_release_notes: true
+          body: |
+            ## KillPort ${{ github.ref_name }}
+
+            A lightweight macOS menu-bar utility to view and kill processes
+            occupying specific ports.
+
+            ### Install
+            1. Download `KillPort-${{ github.ref_name }}.zip` below.
+            2. Unzip the archive.
+            3. Drag **KillPort.app** into your **Applications** folder.
+            4. **Right-click** (or Control-click) the app and choose **Open**
+               the first time — macOS Gatekeeper will warn because the app is
+               ad-hoc signed. Confirm to launch; subsequent opens are normal.
+
+            ### Known Limitations
+            - The app is **ad-hoc signed** (no Apple Developer certificate), so
+              the first launch requires a right-click → Open to bypass
+              Gatekeeper.
+            - Requires **macOS 12.0 (Monterey)** or later.
+          draft: false
+          prerelease: false

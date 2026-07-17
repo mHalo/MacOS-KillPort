@@ -1,0 +1,38 @@
+# =============================================================================
+# KillPort CI Workflow
+# =============================================================================
+# Runs on every push to main and on pull requests targeting main. Verifies
+# that the Swift package compiles in release configuration and executes the
+# test suite.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Swift version
+        run: swift --version
+
+      - name: Build (release)
+        run: swift build -c release --disable-sandbox
+
+      - name: Run tests
+        run: swift test --parallel
