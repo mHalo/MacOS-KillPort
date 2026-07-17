@@ -41,9 +41,18 @@ final class StatusBarController: NSObject {
 
         // Create and configure the popover.
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 480)
+        popover.contentSize = NSSize(width: 380, height: 320)
         popover.behavior = .transient // Close when clicking outside.
-        popover.contentViewController = NSHostingController(rootView: ContentView())
+
+        // Host the SwiftUI ContentView inside an NSHostingController.
+        // On macOS 26+, make the hosting view transparent so the popover's
+        // Liquid Glass material shows through the SwiftUI content.
+        let hostingController = NSHostingController(rootView: ContentView())
+        if #available(macOS 26.0, *) {
+            hostingController.view.wantsLayer = true
+            hostingController.view.layer?.backgroundColor = .clear
+        }
+        popover.contentViewController = hostingController
     }
 
     // MARK: - Actions
@@ -111,7 +120,7 @@ final class StatusBarController: NSObject {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
 
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
 
         NSApp.orderFrontStandardAboutPanel(
             options: [

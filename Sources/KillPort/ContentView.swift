@@ -190,14 +190,16 @@ struct ContentView: View {
             // Kill message banner (transient)
             if let message = viewModel.killMessage {
                 killMessageBanner(message: message)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             // Content area
             contentArea
         }
-        .frame(width: 380, height: 480)
-        .background(Color(NSColor.windowBackgroundColor))
+        .frame(width: 380, height: 320)
+        .background(Color.clear)
         .animation(.easeInOut(duration: 0.25), value: viewModel.killMessage)
         .animation(.easeInOut(duration: 0.25), value: viewModel.scanState)
         .confirmationDialog(
@@ -224,7 +226,7 @@ struct ContentView: View {
 
     /// Reads the app marketing version from the bundle's Info.plist.
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
     }
 
     private var headerView: some View {
@@ -249,7 +251,7 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Search Bar
@@ -273,12 +275,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color(NSColor.textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-            )
+            .glassBackground(in: RoundedRectangle(cornerRadius: 8))
 
             Button(action: { viewModel.scanPort() }) {
                 Text("查询")
@@ -289,7 +286,7 @@ struct ContentView: View {
             .disabled(viewModel.isLoading || viewModel.portInput.isEmpty)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Kill Message Banner
@@ -319,12 +316,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            (viewModel.killMessageIsError
-                ? Color.red.opacity(0.1)
-                : Color.green.opacity(0.1)
-            )
-        )
+        .glassBackground(in: RoundedRectangle(cornerRadius: 8))
         .foregroundStyle(
             viewModel.killMessageIsError ? Color.red : Color.green
         )
@@ -355,9 +347,9 @@ struct ContentView: View {
     // MARK: - State Views
 
     private var emptyStateView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Image(systemName: "network.slash")
-                .font(.system(size: 40))
+                .font(.system(size: 32))
                 .foregroundStyle(.tertiary)
 
             Text("输入端口号查询占用进程")
@@ -372,7 +364,7 @@ struct ContentView: View {
     }
 
     private var loadingView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             ProgressView()
                 .scaleEffect(1.2)
             Text("正在查询...")
@@ -383,9 +375,9 @@ struct ContentView: View {
     }
 
     private func errorView(message: String) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 36))
+                .font(.system(size: 28))
                 .foregroundStyle(.red)
 
             Text("查询失败")
@@ -403,9 +395,9 @@ struct ContentView: View {
     }
 
     private var noResultsView: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 40))
+                .font(.system(size: 32))
                 .foregroundStyle(.green)
 
             Text("没有进程占用此端口")
@@ -503,12 +495,7 @@ struct ProcessCardView: View {
             .help("终止此进程")
         }
         .padding(12)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .glassBackground(in: RoundedRectangle(cornerRadius: 10))
     }
 
     /// A labeled info row displaying a key-value pair.

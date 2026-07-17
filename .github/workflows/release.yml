@@ -1,9 +1,9 @@
 # =============================================================================
 # KillPort Release Workflow
 # =============================================================================
-# Triggers when a version tag (v*) is pushed. Builds the app on a macOS
-# runner, packages it into a .app bundle (reusing Scripts/build.sh), zips the
-# bundle, and publishes a GitHub Release with the artifact attached.
+# Triggers when a version tag (v* or a bare numeric tag like 1.0.3) is pushed.
+# Builds the app on a macOS runner, packages it into a DMG disk image (reusing
+# Scripts/build.sh), and publishes a GitHub Release with the artifact attached.
 # =============================================================================
 
 name: Release
@@ -12,6 +12,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
 
 # Grant the workflow permission to create releases.
 permissions:
@@ -29,19 +30,21 @@ jobs:
       - name: Build & package .app bundle
         run: ./Scripts/build.sh
 
-      - name: Zip the .app bundle
+      - name: Create DMG
         run: |
           cd "$GITHUB_WORKSPACE"
-          ditto -c -k --keepParent KillPort.app "KillPort-${{ github.ref_name }}.zip"
-          echo "Zipped artifact:"
-          ls -lh "KillPort-${{ github.ref_name }}.zip"
+          DMG_NAME="KillPort-${{ github.ref_name }}.dmg"
+          # Create a DMG from the .app bundle
+          hdiutil create -volname "KillPort" -srcfolder KillPort.app -ov -format UDZO "$DMG_NAME"
+          echo "DMG artifact:"
+          ls -lh "$DMG_NAME"
 
       - name: Create GitHub Release & upload asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: KillPort ${{ github.ref_name }}
-          files: KillPort-${{ github.ref_name }}.zip
+          files: KillPort-${{ github.ref_name }}.dmg
           generate_release_notes: true
           body: |
             ## KillPort ${{ github.ref_name }}
@@ -50,10 +53,9 @@ jobs:
             occupying specific ports.
 
             ### Install
-            1. Download `KillPort-${{ github.ref_name }}.zip` below.
-            2. Unzip the archive.
-            3. Drag **KillPort.app** into your **Applications** folder.
-            4. **Right-click** (or Control-click) the app and choose **Open**
+            1. Download `KillPort-${{ github.ref_name }}.dmg` below.
+            2. Open the DMG and drag **KillPort.app** into your **Applications** folder.
+            3. **Right-click** (or Control-click) the app and choose **Open**
                the first time — macOS Gatekeeper will warn because the app is
                ad-hoc signed. Confirm to launch; subsequent opens are normal.
 
