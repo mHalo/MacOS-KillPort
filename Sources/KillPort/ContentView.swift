@@ -1,5 +1,12 @@
 import SwiftUI
 
+// MARK: - Notification Names
+
+extension Notification.Name {
+    /// popover 内容高度变化时发送此通知，用于动态调整 NSPopover 的 contentSize。
+    static let popoverContentHeightChanged = Notification.Name("KillPortPopoverContentHeightChanged")
+}
+
 // MARK: - View Model
 
 /// The view model driving the port scanning and process killing UI.
@@ -264,6 +271,9 @@ struct ContentView: View {
     @StateObject private var viewModel = PortViewModel()
     @ObservedObject var settings: AppSettings
 
+    /// Tracks which process cards are currently expanded (by process ID).
+    @State private var expandedProcessIDs: Set<String> = []
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -293,14 +303,32 @@ struct ContentView: View {
             // Content area
             contentArea
         }
-        .frame(width: 380, height: 340)
+        .frame(width: 380, height: computedPopoverHeight)
         .background(Color.clear)
         .animation(.easeInOut(duration: 0.25), value: viewModel.killMessage)
         .animation(.easeInOut(duration: 0.25), value: viewModel.scanState)
+        .animation(.easeInOut(duration: 0.2), value: expandedProcessIDs)
         .onReceive(NotificationCenter.default.publisher(for: .popoverWillShow)) { _ in
             // 打开面板时重置到自动扫描模式并扫描最近端口
             viewModel.prepareForAutoScan()
             viewModel.triggerAutoScan(recentPorts: settings.recentPorts)
+            expandedProcessIDs.removeAll()
+        }
+        .onChange(of: computedPopoverHeight) { newHeight in
+            // 通知 StatusBarController 动态调整 popover 高度
+            NotificationCenter.default.post(
+                name: .popoverContentHeightChanged,
+                object: nil,
+                userInfo: ["height": newHeight]
+            )
+        }
+        .onAppear {
+            // 首次出现时也发送当前高度
+            NotificationCenter.default.post(
+                name: .popoverContentHeightChanged,
+                object: nil,
+                userInfo: ["height": computedPopoverHeight]
+            )
         }
         .confirmationDialog(
             "确认终止进程",
@@ -311,22 +339,119 @@ struct ContentView: View {
             titleVisibility: .visible,
             presenting: viewModel.killTarget
         ) { process in
-            Button("终止 \(process.command) (PID: \(process.pid))", role: .destructive) {
+            Button("终止 \(process.command) (PID: \(String(process.pid)))", role: .destructive) {
                 viewModel.executeKill()
             }
             Button("取消", role: .cancel) {
                 viewModel.cancelKill()
             }
         } message: { process in
-            Text("确定要终止进程 \(process.command) (PID: \(process.pid)) 吗？\n此操作将先尝试优雅终止，失败后强制终止。")
+            Text("确定要终止进程 \(process.command) (PID: \(String(process.pid))) 吗？\n此操作将先尝试优雅终止，失败后强制终止。")
         }
+    }
+
+    // MARK: - Popover Height Computation
+
+    /// Computes the ideal popover height based on current content state.
+    ///
+    /// Used to dynamically resize the NSPopover to fit content without
+    /// unnecessary scrolling. The height accounts for the header, search bar,
+    /// recent ports bar, kill message banner, and the content area.
+    private var computedPopoverHeight: CGFloat {
+        var height: CGFloat = 0
+        height += 50   // Header (padding 20 + content ~30)
+        height += 1    // Divider
+        height += 50   // Search bar (padding 20 + content ~30)
+        if !settings.recentPorts.isEmpty {
+            height += 1    // Divider
+            height += 30   // Recent ports bar (padding 12 + content ~18)
+        }
+        height += 1    // Divider
+        if viewModel.killMessage != nil {
+            height += 40   // Kill message banner
+        }
+        height += contentAreaHeight
+        return max(height, 200)
+    }
+
+    /// Computes the height of the content area based on the current view state.
+    ///
+    /// For empty/loading/error states, a fixed height of 130 is used.
+    /// For results, the height is estimated based on the number of cards
+    /// (and expanded cards), capped at a maximum to enable scrolling.
+    private var contentAreaHeight: CGFloat {
+        if viewModel.hasSearched {
+            switch viewModel.scanState {
+            case .loading:
+                return 130
+            case .error:
+                return 140
+            case .empty:
+                return 130
+            case .idle:
+                return 130
+            case .loaded(let processes):
+                let expandedCount = processes.filter { expandedProcessIDs.contains($0.id) }.count
+                return scrollableContentHeight(
+                    cardCount: processes.count,
+                    expandedCount: expandedCount
+                )
+            }
+        } else if viewModel.isAutoScanning {
+            return 130
+        } else if !viewModel.autoScanResults.isEmpty {
+            let totalCards = viewModel.autoScanResults.reduce(0) { $0 + $1.processes.count }
+            let groupCount = viewModel.autoScanResults.count
+            let allProcesses = viewModel.autoScanResults.flatMap { $0.processes }
+            let expandedCount = allProcesses.filter { expandedProcessIDs.contains($0.id) }.count
+            return scrollableContentHeight(
+                cardCount: totalCards,
+                groupHeaders: groupCount,
+                expandedCount: expandedCount
+            )
+        } else {
+            return 130
+        }
+    }
+
+    /// Estimates the height of a scrollable results area.
+    ///
+    /// - Parameters:
+    ///   - cardCount: Number of process cards.
+    ///   - groupHeaders: Number of port group headers (for auto-scan results).
+    ///   - expandedCount: Number of cards currently expanded (showing details).
+    /// - Returns: Estimated height, capped at 350 to enable scrolling for many results.
+    private func scrollableContentHeight(
+        cardCount: Int,
+        groupHeaders: Int = 0,
+        expandedCount: Int = 0
+    ) -> CGFloat {
+        if cardCount == 0 { return 0 }
+        let cardHeight: CGFloat = 58
+        let expandedExtraHeight: CGFloat = 95
+        let cardSpacing: CGFloat = 10
+        let headerHeight: CGFloat = 24
+        let headerSpacing: CGFloat = 6
+        let groupSpacing: CGFloat = 10
+        let padding: CGFloat = 32  // 16 top + 16 bottom
+
+        var height = padding
+        if groupHeaders > 0 {
+            height += CGFloat(groupHeaders) * (headerHeight + headerSpacing)
+            height += CGFloat(max(0, groupHeaders - 1)) * groupSpacing
+        }
+        height += CGFloat(cardCount) * cardHeight
+        height += CGFloat(expandedCount) * expandedExtraHeight
+        height += CGFloat(max(0, cardCount - 1)) * cardSpacing
+
+        return min(height, 350)
     }
 
     // MARK: - Header
 
     /// Reads the app marketing version from the bundle's Info.plist.
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1"
     }
 
     private var headerView: some View {
@@ -355,7 +480,7 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("设置")
 
-            Text("v\(appVersion)")
+            Text("v" + appVersion)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -552,7 +677,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             if let port = viewModel.scannedPortLabel {
-                Text("端口 \(port) 是空闲的")
+                Text("端口 " + port + " 是空闲的")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -574,7 +699,7 @@ struct ContentView: View {
     }
 
     private var autoScanResultsView: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 10) {
                 ForEach(viewModel.autoScanResults) { result in
                     VStack(alignment: .leading, spacing: 6) {
@@ -583,7 +708,7 @@ struct ContentView: View {
                             Image(systemName: "circle.fill")
                                 .font(.system(size: 6))
                                 .foregroundStyle(.green)
-                            Text("端口 :\(result.port)")
+                            Text("端口 " + String(result.port))
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.secondary)
@@ -592,9 +717,12 @@ struct ContentView: View {
 
                         // 进程卡片
                         ForEach(result.processes) { process in
-                            ProcessCardView(process: process) {
-                                viewModel.requestKill(process)
-                            }
+                            ProcessCardView(
+                                process: process,
+                                isExpanded: expandedProcessIDs.contains(process.id),
+                                onToggleExpand: { toggleExpand(process.id) },
+                                onKill: { viewModel.requestKill(process) }
+                            )
                         }
                     }
                 }
@@ -606,15 +734,32 @@ struct ContentView: View {
     // MARK: - Results
 
     private var resultsScrollView: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             LazyVStack(spacing: 10) {
                 ForEach(viewModel.processes) { process in
-                    ProcessCardView(process: process) {
-                        viewModel.requestKill(process)
-                    }
+                    ProcessCardView(
+                        process: process,
+                        isExpanded: expandedProcessIDs.contains(process.id),
+                        onToggleExpand: { toggleExpand(process.id) },
+                        onKill: { viewModel.requestKill(process) }
+                    )
                 }
             }
             .padding(16)
+        }
+    }
+
+    // MARK: - Expand/Collapse Helper
+
+    /// Toggles the expansion state of a process card.
+    /// - Parameter id: The process ID (from `PortProcess.id`).
+    private func toggleExpand(_ id: String) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedProcessIDs.contains(id) {
+                expandedProcessIDs.remove(id)
+            } else {
+                expandedProcessIDs.insert(id)
+            }
         }
     }
 
@@ -641,7 +786,9 @@ struct RecentPortTag: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            Text(":\(port)")
+            // Use String(port) to avoid LocalizedStringKey locale formatting
+            // (e.g., "5,801" with thousands separator in some locales).
+            Text(String(port))
                 .font(.caption2)
                 .fontWeight(.medium)
 
@@ -671,74 +818,96 @@ struct RecentPortTag: View {
         .onTapGesture {
             onClick()
         }
-        .help("点击查询端口 \(port)")
+        .help("点击查询端口 " + String(port))
     }
 }
 
 // MARK: - Process Card View
 
 /// A card displaying a single process's information with a kill button.
+///
+/// In collapsed mode (default), only the process name and kill button are shown.
+/// Tapping the chevron expands the card to reveal PID, user, FD, connection type,
+/// and connection address details.
 struct ProcessCardView: View {
 
     let process: PortProcess
+    let isExpanded: Bool
+    let onToggleExpand: () -> Void
     let onKill: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Process icon
-            Image(systemName: "terminal")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 28, height: 28)
-                .background(Color.accentColor.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        VStack(alignment: .leading, spacing: 0) {
+            // Collapsed content (always visible)
+            HStack(alignment: .center, spacing: 12) {
+                // Process icon
+                Image(systemName: "terminal")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentColor.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            // Process details
-            VStack(alignment: .leading, spacing: 4) {
-                // Allow long process names to wrap onto a second line instead of
-                // being truncated. `minimumScaleFactor` first attempts to shrink the
-                // font slightly before wrapping; `fixedSize(vertical: true)` lets the
-                // text expand vertically so it is never clipped. A hover tooltip shows
-                // the full command for anything still ellipsized at 2 lines.
+                // Process name (truncated to single line when collapsed)
                 Text(process.command)
                     .font(.callout)
                     .fontWeight(.semibold)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .minimumScaleFactor(0.85)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(isExpanded ? 2 : 1)
+                    .truncationMode(.middle)
                     .help(process.command)
 
-                infoRow(label: "PID", value: "\(process.pid)")
-                infoRow(label: "用户", value: process.user)
-                infoRow(label: "FD", value: process.fileDescriptor)
+                Spacer(minLength: 4)
 
-                HStack(spacing: 4) {
-                    Text("\(process.type)")
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.accentColor.opacity(0.15))
-                        .clipShape(Capsule())
-
-                    Text(process.name)
-                        .font(.caption2)
+                // Expand/collapse chevron
+                Button(action: onToggleExpand) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
-                .padding(.top, 2)
+                .buttonStyle(.plain)
+                .help(isExpanded ? "收起详情" : "展开详情")
+
+                // Kill button
+                Button(action: onKill) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("终止此进程")
             }
 
-            Spacer(minLength: 4)
+            // Expanded details (conditionally visible)
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    Divider()
+                        .padding(.vertical, 2)
 
-            // Kill button
-            Button(action: onKill) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.red)
+                    infoRow(label: "PID", value: String(process.pid))
+                    infoRow(label: "用户", value: process.user)
+                    infoRow(label: "FD", value: process.fileDescriptor)
+
+                    HStack(spacing: 6) {
+                        Text(process.type)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.15))
+                            .clipShape(Capsule())
+
+                        Text(process.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 2)
+                }
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .buttonStyle(.plain)
-            .help("终止此进程")
         }
         .padding(12)
         .glassBackground(in: RoundedRectangle(cornerRadius: 10))
@@ -747,7 +916,10 @@ struct ProcessCardView: View {
     /// A labeled info row displaying a key-value pair.
     private func infoRow(label: String, value: String) -> some View {
         HStack(spacing: 4) {
-            Text("\(label):")
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text(":")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             Text(value)

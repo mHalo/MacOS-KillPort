@@ -51,7 +51,9 @@ final class StatusBarController: NSObject {
 
         // Create and configure the popover.
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 340)
+        // Initial size; will be dynamically adjusted via popoverContentHeightChanged
+        // notifications from ContentView based on actual content.
+        popover.contentSize = NSSize(width: 380, height: 260)
         popover.behavior = .transient // Close when clicking outside.
         popover.delegate = self
 
@@ -75,6 +77,12 @@ final class StatusBarController: NSObject {
         NotificationCenter.default.addObserver(
             self, selector: #selector(launchAtLoginChanged(_:)),
             name: .launchAtLoginChanged, object: nil
+        )
+
+        // 监听 popover 内容高度变化，动态调整 popover 尺寸
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handlePopoverHeightChanged(_:)),
+            name: .popoverContentHeightChanged, object: nil
         )
 
         // 如果设置了开机启动，确保已注册
@@ -156,7 +164,7 @@ final class StatusBarController: NSObject {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
 
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1"
 
         NSApp.orderFrontStandardAboutPanel(
             options: [
@@ -184,6 +192,12 @@ final class StatusBarController: NSObject {
         if settingsWindow == nil {
             let settingsView = SettingsView(settings: settings)
             let hostingController = NSHostingController(rootView: settingsView)
+            // Make the content view transparent so the glass section cards
+            // can blend with the desktop on macOS 26+.
+            hostingController.view.wantsLayer = true
+            if #available(macOS 26.0, *) {
+                hostingController.view.layer?.backgroundColor = .clear
+            }
             settingsWindow = NSWindow(contentViewController: hostingController)
             settingsWindow?.title = "KillPort 设置"
             settingsWindow?.styleMask = [.titled, .closable]
@@ -200,6 +214,21 @@ final class StatusBarController: NSObject {
     @objc private func launchAtLoginChanged(_ notification: Notification) {
         guard let enabled = notification.userInfo?["enabled"] as? Bool else { return }
         updateLaunchAtLogin(enabled: enabled)
+    }
+
+    /// Handles popover content height changes by resizing the popover.
+    ///
+    /// Called when ContentView's `computedPopoverHeight` changes, allowing
+    /// the popover to dynamically adapt its height to fit the content
+    /// without unnecessary scrolling.
+    @objc private func handlePopoverHeightChanged(_ notification: Notification) {
+        guard let height = notification.userInfo?["height"] as? CGFloat else { return }
+        let currentHeight = popover.contentSize.height
+        // Only update if the height difference is significant (> 1pt) to
+        // avoid unnecessary layout passes from minor floating-point changes.
+        if abs(currentHeight - height) > 1 {
+            popover.contentSize = NSSize(width: 380, height: height)
+        }
     }
 
     /// Registers or unregisters the app for launch at login using SMAppService (macOS 13+).
