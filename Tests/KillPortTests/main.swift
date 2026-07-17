@@ -383,6 +383,55 @@ func testModels(_ t: TestRunner) {
     }
 }
 
+// MARK: - Settings Store Tests
+
+func testSettingsStore(_ t: TestRunner) {
+    t.run("testSettingsStoreRecentPorts") {
+        let settings = AppSettings()
+        // 先清空（避免之前测试的残留）
+        settings.clearRecentPorts()
+
+        // 测试 addRecentPort
+        settings.maxRecentPorts = 5
+        settings.addRecentPort(8080)
+        try t.assertEqual(settings.recentPorts, [8080])
+
+        settings.addRecentPort(3000)
+        try t.assertEqual(settings.recentPorts, [3000, 8080])
+
+        // 重复添加 → 移到最前
+        settings.addRecentPort(8080)
+        try t.assertEqual(settings.recentPorts, [8080, 3000])
+
+        // 测试 maxRecentPorts 限制
+        settings.maxRecentPorts = 2
+        try t.assertEqual(settings.recentPorts.count, 2, "Should trim to 2")
+        try t.assertEqual(settings.recentPorts, [8080, 3000], "Should keep most recent 2")
+
+        // 测试 maxRecentPorts = 0
+        settings.maxRecentPorts = 0
+        try t.assertEqual(settings.recentPorts.count, 0, "Should clear all when max is 0")
+        settings.addRecentPort(8080)
+        try t.assertEqual(settings.recentPorts.count, 0, "Should not add when max is 0")
+
+        // 测试 removeRecentPort
+        settings.maxRecentPorts = 5
+        settings.addRecentPort(8080)
+        settings.addRecentPort(3000)
+        settings.removeRecentPort(8080)
+        try t.assertEqual(settings.recentPorts, [3000])
+
+        // 测试 maxRecentPorts 范围保护
+        settings.maxRecentPorts = 100
+        try t.assertEqual(settings.maxRecentPorts, 8, "Should clamp to 8")
+        settings.maxRecentPorts = -1
+        try t.assertEqual(settings.maxRecentPorts, 0, "Should clamp to 0")
+
+        // 清理
+        settings.clearRecentPorts()
+    }
+}
+
 // MARK: - Real Port Scan Test
 
 func testRealPortScan(_ t: TestRunner) async {
@@ -446,6 +495,10 @@ struct TestMain {
         print("")
         print("━━━ Model Tests ━━━")
         testModels(t)
+
+        print("")
+        print("━━━ Settings Store Tests ━━━")
+        testSettingsStore(t)
 
         print("")
         print("━━━ Real Port Scan Tests ━━━")

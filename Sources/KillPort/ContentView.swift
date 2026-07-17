@@ -24,12 +24,19 @@ final class PortViewModel: ObservableObject {
     @Published var killMessage: String?
     @Published var killMessageIsError: Bool = false
 
+    /// 自动扫描结果（打开面板时扫描最近端口）。
+    @Published private(set) var autoScanResults: [PortScanResult] = []
+
+    /// 是否正在自动扫描最近端口。
+    @Published private(set) var isAutoScanning: Bool = false
+
     // MARK: - Private Properties
 
     private let scanner = PortScanner()
     private let killer = ProcessKiller()
 
-    /// The port number from the last successful scan, used for refresh after kill.
+    /// The port number from the last successful scan, used for refresh after kill
+    /// and for displaying the port number in the no-results view.
     private var lastScannedPort: Int?
 
     // MARK: - Computed Properties
@@ -57,17 +64,41 @@ final class PortViewModel: ObservableObject {
         scanState != .idle
     }
 
+    /// The port number from the last scan, as a string for display.
+    /// Used in `noResultsView` since `portInput` is cleared after scanning.
+    var scannedPortLabel: String? {
+        lastScannedPort.map { "\($0)" }
+    }
+
     // MARK: - Actions
 
     /// Validates the port input and triggers a scan.
-    func scanPort() {
+    ///
+    /// On success, clears the input field and returns the scanned port number.
+    /// On validation failure, sets the error state and returns nil.
+    ///
+    /// - Returns: The scanned port number, or nil if validation failed.
+    @discardableResult
+    func scanPort() -> Int? {
         // Filter and validate the port input.
         let trimmed = portInput.trimmingCharacters(in: .whitespaces)
         guard let port = Int(trimmed), port >= 1, port <= 65535 else {
             scanState = .error("请输入有效的端口号（1-65535）")
-            return
+            return nil
         }
 
+        portInput = ""  // 清空输入框
+        scanSpecificPort(port)
+        return port
+    }
+
+    /// Scans a specific port number without relying on `portInput`.
+    ///
+    /// Used by tag clicks and `scanPort()` internally.
+    /// Sets the loading state and performs an async scan.
+    ///
+    /// - Parameter port: The port number to scan (1-65535).
+    func scanSpecificPort(_ port: Int) {
         lastScannedPort = port
         scanState = .loading
 
@@ -82,6 +113,58 @@ final class PortViewModel: ObservableObject {
             } catch {
                 self.scanState = .error(error.localizedDescription)
             }
+        }
+    }
+
+    /// Resets the view model to auto-scan mode.
+    ///
+    /// Called when the popover is about to show, so that the auto-scan results
+    /// are displayed instead of stale manual search results.
+    func prepareForAutoScan() {
+        scanState = .idle
+    }
+
+    /// Auto-scans all recent ports, collecting processes for ports that are in use.
+    ///
+    /// Scans all ports concurrently, then sorts results by the original
+    /// `recentPorts` order (most recent first). Only ports with active
+    /// processes are included in the results.
+    ///
+    /// - Parameter recentPorts: The list of recently queried ports to scan.
+    func triggerAutoScan(recentPorts: [Int]) {
+        guard !recentPorts.isEmpty else {
+            autoScanResults = []
+            return
+        }
+        isAutoScanning = true
+        Task {
+            var results: [PortScanResult] = []
+            // 并发扫描所有端口
+            await withTaskGroup(of: (Int, [PortProcess]).self) { group in
+                for port in recentPorts {
+                    group.addTask { [scanner] in
+                        do {
+                            let procs = try await scanner.scan(port: port)
+                            return (port, procs)
+                        } catch {
+                            return (port, [])
+                        }
+                    }
+                }
+                for await (port, procs) in group {
+                    if !procs.isEmpty {
+                        results.append(PortScanResult(port: port, processes: procs))
+                    }
+                }
+            }
+            // 按 recentPorts 的原始顺序排序（最新查询在前）
+            results.sort { a, b in
+                let aIdx = recentPorts.firstIndex(of: a.port) ?? Int.max
+                let bIdx = recentPorts.firstIndex(of: b.port) ?? Int.max
+                return aIdx < bIdx
+            }
+            self.autoScanResults = results
+            self.isAutoScanning = false
         }
     }
 
@@ -110,7 +193,7 @@ final class PortViewModel: ObservableObject {
             switch result {
             case .success:
                 showKillMessage("进程 \(command) (PID: \(pid)) 已终止", isError: false)
-                // Refresh the scan to show updated results.
+                // Refresh the scan to show updated results (silent, no loading state).
                 if let port = lastScannedPort {
                     refreshScan(port: port)
                 }
@@ -133,7 +216,10 @@ final class PortViewModel: ObservableObject {
 
     // MARK: - Private Helpers
 
-    /// Refreshes the scan results for the given port without changing the loading state.
+    /// Refreshes the scan results for the given port silently (without showing loading state).
+    ///
+    /// Used after a kill operation to update the results without flickering
+    /// the loading indicator.
     private func refreshScan(port: Int) {
         Task {
             do {
@@ -166,14 +252,17 @@ final class PortViewModel: ObservableObject {
 /// The main SwiftUI view displayed inside the popover panel.
 ///
 /// Contains:
-/// - A header with the app name and icon.
+/// - A header with the app name, icon, and settings gear.
 /// - A search bar with a port number input and query button.
+/// - A recent ports tag bar (shown when there are saved ports).
 /// - A scrollable results area showing process cards.
+/// - Auto-scan results when the popover opens.
 /// - States for loading, error, empty, and no results.
 /// - A kill confirmation dialog.
 struct ContentView: View {
 
     @StateObject private var viewModel = PortViewModel()
+    @ObservedObject var settings: AppSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -184,6 +273,12 @@ struct ContentView: View {
 
             // Search bar
             searchBar
+
+            // 最近端口标签栏（有记录时才显示）
+            if !settings.recentPorts.isEmpty {
+                Divider()
+                recentPortsBar
+            }
 
             Divider()
 
@@ -198,10 +293,15 @@ struct ContentView: View {
             // Content area
             contentArea
         }
-        .frame(width: 380, height: 320)
+        .frame(width: 380, height: 340)
         .background(Color.clear)
         .animation(.easeInOut(duration: 0.25), value: viewModel.killMessage)
         .animation(.easeInOut(duration: 0.25), value: viewModel.scanState)
+        .onReceive(NotificationCenter.default.publisher(for: .popoverWillShow)) { _ in
+            // 打开面板时重置到自动扫描模式并扫描最近端口
+            viewModel.prepareForAutoScan()
+            viewModel.triggerAutoScan(recentPorts: settings.recentPorts)
+        }
         .confirmationDialog(
             "确认终止进程",
             isPresented: Binding(
@@ -226,7 +326,7 @@ struct ContentView: View {
 
     /// Reads the app marketing version from the bundle's Info.plist.
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
     }
 
     private var headerView: some View {
@@ -245,6 +345,15 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            // 设置按钮
+            Button(action: { showSettings() }) {
+                Image(systemName: "gearshape")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("设置")
 
             Text("v\(appVersion)")
                 .font(.caption2)
@@ -270,14 +379,20 @@ struct ContentView: View {
                 .textFieldStyle(.plain)
                 .font(.body)
                 .onSubmit {
-                    viewModel.scanPort()
+                    if let port = viewModel.scanPort() {
+                        settings.addRecentPort(port)
+                    }
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .glassBackground(in: RoundedRectangle(cornerRadius: 8))
 
-            Button(action: { viewModel.scanPort() }) {
+            Button(action: {
+                if let port = viewModel.scanPort() {
+                    settings.addRecentPort(port)
+                }
+            }) {
                 Text("查询")
                     .font(.callout)
                     .fontWeight(.medium)
@@ -287,6 +402,30 @@ struct ContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Recent Ports Bar
+
+    private var recentPortsBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Text("最近")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+
+                ForEach(settings.recentPorts, id: \.self) { port in
+                    RecentPortTag(port: port) {
+                        // 点击标签 → 查询
+                        settings.addRecentPort(port)  // 移到最前
+                        viewModel.scanSpecificPort(port)
+                    } onDelete: {
+                        settings.removeRecentPort(port)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+        }
     }
 
     // MARK: - Kill Message Banner
@@ -326,21 +465,29 @@ struct ContentView: View {
 
     @ViewBuilder
     private var contentArea: some View {
-        switch viewModel.scanState {
-        case .idle:
+        if viewModel.hasSearched {
+            // 用户已手动查询 → 显示查询结果
+            switch viewModel.scanState {
+            case .loading:
+                loadingView
+            case .error(let message):
+                errorView(message: message)
+            case .empty:
+                noResultsView
+            case .loaded:
+                resultsScrollView
+            case .idle:
+                emptyStateView
+            }
+        } else if viewModel.isAutoScanning {
+            // 正在自动扫描最近端口
+            autoScanningView
+        } else if !viewModel.autoScanResults.isEmpty {
+            // 自动扫描完成，有结果 → 显示在用端口列表
+            autoScanResultsView
+        } else {
+            // 空闲状态
             emptyStateView
-
-        case .loading:
-            loadingView
-
-        case .error(let message):
-            errorView(message: message)
-
-        case .empty:
-            noResultsView
-
-        case .loaded:
-            resultsScrollView
         }
     }
 
@@ -404,13 +551,56 @@ struct ContentView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            if !viewModel.portInput.isEmpty {
-                Text("端口 \(viewModel.portInput) 是空闲的")
+            if let port = viewModel.scannedPortLabel {
+                Text("端口 \(port) 是空闲的")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Auto Scan Views
+
+    private var autoScanningView: some View {
+        VStack(spacing: 8) {
+            ProgressView()
+                .scaleEffect(1.1)
+            Text("正在检查最近端口...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var autoScanResultsView: some View {
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(viewModel.autoScanResults) { result in
+                    VStack(alignment: .leading, spacing: 6) {
+                        // 端口号标题
+                        HStack(spacing: 4) {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 6))
+                                .foregroundStyle(.green)
+                            Text("端口 :\(result.port)")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 4)
+
+                        // 进程卡片
+                        ForEach(result.processes) { process in
+                            ProcessCardView(process: process) {
+                                viewModel.requestKill(process)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
     }
 
     // MARK: - Results
@@ -426,6 +616,62 @@ struct ContentView: View {
             }
             .padding(16)
         }
+    }
+
+    // MARK: - Settings
+
+    /// Sends a notification to open the settings window.
+    private func showSettings() {
+        NotificationCenter.default.post(name: .openSettings, object: nil)
+    }
+}
+
+// MARK: - Recent Port Tag
+
+/// A tag/chip displaying a recently queried port number.
+///
+/// - Tap: Triggers `onClick` to scan the port.
+/// - Hover: Shows a delete button (×) that triggers `onDelete`.
+struct RecentPortTag: View {
+    let port: Int
+    let onClick: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(":\(port)")
+                .font(.caption2)
+                .fontWeight(.medium)
+
+            if isHovered {
+                Button(action: onDelete) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(
+            isHovered
+                ? Color.accentColor.opacity(0.2)
+                : Color.accentColor.opacity(0.1)
+        )
+        .clipShape(Capsule())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .onTapGesture {
+            onClick()
+        }
+        .help("点击查询端口 \(port)")
     }
 }
 

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ServiceManagement
 
 // MARK: - Status Bar Controller
 
@@ -8,8 +9,11 @@ import SwiftUI
 /// This controller is responsible for:
 /// - Creating and displaying an `NSStatusItem` in the system menu bar.
 /// - Handling left-click to toggle the popover panel.
-/// - Handling right-click (or Control-click) to show a context menu with a Quit option.
+/// - Handling right-click (or Control-click) to show a context menu with
+///   About, Settings, and Quit options.
 /// - Hosting the SwiftUI `ContentView` inside an `NSPopover`.
+/// - Managing the settings window (opened from the gear icon or context menu).
+/// - Handling launch-at-login registration via `SMAppService` (macOS 13+).
 final class StatusBarController: NSObject {
 
     /// The status bar item shown in the system menu bar.
@@ -17,6 +21,12 @@ final class StatusBarController: NSObject {
 
     /// The popover panel that appears when the status bar icon is clicked.
     private var popover: NSPopover!
+
+    /// Persistent application settings shared between ContentView and SettingsView.
+    private let settings = AppSettings()
+
+    /// The settings window, lazily created on first open.
+    private var settingsWindow: NSWindow?
 
     // MARK: - Initialization
 
@@ -41,25 +51,43 @@ final class StatusBarController: NSObject {
 
         // Create and configure the popover.
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 320)
+        popover.contentSize = NSSize(width: 380, height: 340)
         popover.behavior = .transient // Close when clicking outside.
+        popover.delegate = self
 
         // Host the SwiftUI ContentView inside an NSHostingController.
         // On macOS 26+, make the hosting view transparent so the popover's
         // Liquid Glass material shows through the SwiftUI content.
-        let hostingController = NSHostingController(rootView: ContentView())
+        let hostingController = NSHostingController(rootView: ContentView(settings: settings))
         if #available(macOS 26.0, *) {
             hostingController.view.wantsLayer = true
             hostingController.view.layer?.backgroundColor = .clear
         }
         popover.contentViewController = hostingController
+
+        // 监听设置面板打开请求
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(showSettingsWindow),
+            name: .openSettings, object: nil
+        )
+
+        // 监听开机启动设置变化
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(launchAtLoginChanged(_:)),
+            name: .launchAtLoginChanged, object: nil
+        )
+
+        // 如果设置了开机启动，确保已注册
+        if settings.launchAtLogin {
+            updateLaunchAtLogin(enabled: true)
+        }
     }
 
     // MARK: - Actions
 
     /// Handles clicks on the status bar icon.
     /// - Left-click: Toggles the popover panel.
-    /// - Right-click / Control-click: Shows a context menu with a Quit option.
+    /// - Right-click / Control-click: Shows a context menu with About, Settings, and Quit.
     @objc private func statusItemClicked(_ sender: AnyObject?) {
         guard let event = NSApp.currentEvent else {
             togglePopover()
@@ -87,7 +115,7 @@ final class StatusBarController: NSObject {
         }
     }
 
-    /// Shows the right-click context menu with a Quit option.
+    /// Shows the right-click context menu with About, Settings, and Quit options.
     private func showContextMenu() {
         guard let button = statusItem.button else { return }
 
@@ -100,6 +128,14 @@ final class StatusBarController: NSObject {
         )
         aboutItem.target = self
         menu.addItem(aboutItem)
+
+        let settingsItem = NSMenuItem(
+            title: "设置...",
+            action: #selector(showSettingsWindow),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -120,7 +156,7 @@ final class StatusBarController: NSObject {
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
 
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0"
 
         NSApp.orderFrontStandardAboutPanel(
             options: [
@@ -137,5 +173,61 @@ final class StatusBarController: NSObject {
     /// Terminates the application.
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Settings Window
+
+    /// Shows the settings window as an independent NSWindow.
+    @objc private func showSettingsWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        if settingsWindow == nil {
+            let settingsView = SettingsView(settings: settings)
+            let hostingController = NSHostingController(rootView: settingsView)
+            settingsWindow = NSWindow(contentViewController: hostingController)
+            settingsWindow?.title = "KillPort 设置"
+            settingsWindow?.styleMask = [.titled, .closable]
+            settingsWindow?.isReleasedWhenClosed = false
+            settingsWindow?.center()
+        }
+
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Launch at Login
+
+    /// Handles launch-at-login setting changes via notification.
+    @objc private func launchAtLoginChanged(_ notification: Notification) {
+        guard let enabled = notification.userInfo?["enabled"] as? Bool else { return }
+        updateLaunchAtLogin(enabled: enabled)
+    }
+
+    /// Registers or unregisters the app for launch at login using SMAppService (macOS 13+).
+    /// On macOS 12, this is a no-op since SMAppService.mainApp is unavailable.
+    /// - Parameter enabled: True to register, false to unregister.
+    private func updateLaunchAtLogin(enabled: Bool) {
+        if #available(macOS 13.0, *) {
+            let service = SMAppService.mainApp
+            do {
+                if enabled {
+                    try service.register()
+                } else {
+                    try service.unregister()
+                }
+            } catch {
+                print("Failed to \(enabled ? "register" : "unregister") launch at login: \(error)")
+            }
+        }
+        // macOS 12 不支持 SMAppService.mainApp，跳过
+    }
+}
+
+// MARK: - NSPopoverDelegate
+
+extension StatusBarController: NSPopoverDelegate {
+    /// Called when the popover is about to show. Posts a notification so
+    /// ContentView can trigger an auto-scan of recent ports.
+    func popoverWillShow(_ notification: Notification) {
+        NotificationCenter.default.post(name: .popoverWillShow, object: nil)
     }
 }

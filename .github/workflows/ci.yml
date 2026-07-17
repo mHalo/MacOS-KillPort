@@ -45,6 +45,7 @@ jobs:
           swiftc Sources/KillPort/Models.swift \
                  Sources/KillPort/PortScanner.swift \
                  Sources/KillPort/ProcessKiller.swift \
+                 Sources/KillPort/SettingsStore.swift \
                  Tests/KillPortTests/main.swift \
                  -o /tmp/KillPortTests \
                  -framework AppKit -framework SwiftUI \

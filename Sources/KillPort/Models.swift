@@ -58,3 +58,15 @@ enum ScanState: Equatable {
     /// The scan failed with an error.
     case error(String)
 }
+
+// MARK: - Port Scan Result (for auto-scan)
+
+/// 自动扫描多个端口的结果。
+///
+/// 用于在打开 popover 时批量扫描最近查询过的端口，
+/// 收集所有被占用的端口及其进程信息。
+struct PortScanResult: Identifiable, Equatable {
+    var id: Int { port }
+    let port: Int
+    let processes: [PortProcess]
+}
