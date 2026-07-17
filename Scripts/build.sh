@@ -43,8 +43,8 @@ mkdir -p "$RESOURCES_DIR"
 # Copy the compiled binary into the bundle.
 cp "$BINARY" "$MACOS_DIR/KillPort"
 
-# Copy the Info.plist into the bundle's Resources directory.
-cp "$PROJECT_ROOT/Resources/Info.plist" "$RESOURCES_DIR/Info.plist"
+# Copy the Info.plist to the bundle's Contents directory (macOS standard location).
+cp "$PROJECT_ROOT/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 # Make the binary executable.
 chmod +x "$MACOS_DIR/KillPort"
