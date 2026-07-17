@@ -27,8 +27,11 @@ enum PortScanError: LocalizedError {
 
 /// Scans for processes occupying a given network port using the `lsof` system utility.
 ///
-/// This class wraps the `lsof -i :<port> -P -n` command, executes it on a background
+/// This class wraps the `lsof +c 0 -i :<port> -P -n` command, executes it on a background
 /// thread, and parses the output into `PortProcess` objects.
+///
+/// The `+c 0` argument tells lsof to print the full command name instead of
+/// truncating the COMMAND column to the default 9-character width.
 final class PortScanner: Sendable {
 
     /// The path to the lsof binary.
@@ -77,7 +80,7 @@ final class PortScanner: Sendable {
                 let stderrPipe = Pipe()
 
                 process.executableURL = URL(fileURLWithPath: self.lsofPath)
-                process.arguments = ["-i", ":\(port)", "-P", "-n"]
+                process.arguments = ["+c", "0", "-i", ":\(port)", "-P", "-n"]
                 process.standardOutput = stdoutPipe
                 process.standardError = stderrPipe
 
@@ -112,11 +115,15 @@ final class PortScanner: Sendable {
 
     /// Parses a single line of lsof output into a `PortProcess`.
     ///
-    /// The expected lsof output format (with `-i` flag) is:
+    /// The expected lsof output format (with `+c 0 -i` flags) is:
     /// ```
-    /// COMMAND   PID   USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
-    /// node    12345  user   23u  IPv6  0x1234      0t0  TCP *:3000 (LISTEN)
+    /// COMMAND               PID   USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
+    /// MHalo.CoreFx.VAdmin 12345  user   23u  IPv6  0x1234      0t0  TCP *:3000 (LISTEN)
     /// ```
+    ///
+    /// The `+c 0` argument prevents lsof from truncating the COMMAND column to
+    /// its default width of 9 characters, ensuring long process names are fully
+    /// captured.
     ///
     /// COMMAND and NAME fields may contain spaces. The PID is identified as the
     /// first all-numeric token after the COMMAND field.
