@@ -2,6 +2,8 @@
 
 A macOS menu bar utility for finding and killing processes occupying specific network ports.
 
+[中文介绍](./README_CN.md)
+
 ## Features
 
 - **Menu Bar Resident** — Lives in your system menu bar, always one click away.
@@ -13,6 +15,22 @@ A macOS menu bar utility for finding and killing processes occupying specific ne
 - **Pure Menu Bar App** — No Dock icon, no main window (LSUIElement).
 - **Dark Mode Support** — Adapts automatically to light/dark appearance.
 - **Modern UI** — Card-based results, frosted glass effect, smooth animations.
+- **Recent Ports** — Quickly re-query frequently used ports with a single tap.
+- **Settings** — Customize the number of recent ports saved and auto-launch at login.
+
+## Screenshots
+
+### Main Interface
+
+Query a port and view all processes occupying it at a glance.
+
+![KillPort main interface](screenshots/screenshot-main.png)
+
+### Settings
+
+Adjust the number of recent ports saved and manage auto-start preferences.
+
+![KillPort settings](screenshots/screenshot-settings.png)
 
 ## Requirements
 

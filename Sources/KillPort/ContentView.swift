@@ -24,6 +24,11 @@ final class PortViewModel: ObservableObject {
     /// The current scan state (idle, loading, loaded, empty, error).
     @Published private(set) var scanState: ScanState = .idle
 
+    /// The currently selected port in the recent tags bar.
+    /// When `nil`, the view shows auto-scan results for all recent ports.
+    /// When set, the view shows only the processes for that specific port.
+    @Published var selectedPort: Int? = nil
+
     /// The process currently targeted for killing (drives the confirmation dialog).
     @Published var killTarget: PortProcess?
 
@@ -95,6 +100,7 @@ final class PortViewModel: ObservableObject {
         }
 
         portInput = ""  // 清空输入框
+        selectedPort = port
         scanSpecificPort(port)
         return port
     }
@@ -129,6 +135,7 @@ final class PortViewModel: ObservableObject {
     /// are displayed instead of stale manual search results.
     func prepareForAutoScan() {
         scanState = .idle
+        selectedPort = nil
     }
 
     /// Auto-scans all recent ports, collecting processes for ports that are in use.
@@ -173,6 +180,13 @@ final class PortViewModel: ObservableObject {
             self.autoScanResults = results
             self.isAutoScanning = false
         }
+    }
+
+    /// Removes any auto-scan result for the given port.
+    /// Called when a recent port tag is deleted, so the result list stays in sync.
+    /// - Parameter port: The port whose auto-scan result should be removed.
+    func removeAutoScanResult(for port: Int) {
+        autoScanResults.removeAll { $0.port == port }
     }
 
     /// Sets the kill target, which triggers the confirmation dialog.
@@ -371,7 +385,7 @@ struct ContentView: View {
             height += 40   // Kill message banner
         }
         height += contentAreaHeight
-        return max(height, 200)
+        return min(max(height, 360), 640)
     }
 
     /// Computes the height of the content area based on the current view state.
@@ -444,7 +458,7 @@ struct ContentView: View {
         height += CGFloat(expandedCount) * expandedExtraHeight
         height += CGFloat(max(0, cardCount - 1)) * cardSpacing
 
-        return min(height, 350)
+        return min(height, 540)
     }
 
     // MARK: - Header
@@ -539,11 +553,26 @@ struct ContentView: View {
                     .foregroundStyle(.tertiary)
 
                 ForEach(settings.recentPorts, id: \.self) { port in
-                    RecentPortTag(port: port) {
-                        // 点击标签 → 查询
-                        settings.addRecentPort(port)  // 移到最前
-                        viewModel.scanSpecificPort(port)
+                    RecentPortTag(
+                        port: port,
+                        isSelected: viewModel.selectedPort == port
+                    ) {
+                        // 点击已选中标签 → 取消选中，回到自动扫描
+                        // 点击未选中标签 → 选中并查询该端口
+                        if viewModel.selectedPort == port {
+                            viewModel.prepareForAutoScan()
+                        } else {
+                            viewModel.selectedPort = port
+                            settings.addRecentPort(port)  // 移到最前
+                            viewModel.scanSpecificPort(port)
+                        }
                     } onDelete: {
+                        // 删除标签时：若正在展示该端口结果则清空，
+                        // 同时从自动扫描结果中也移除该端口。
+                        if viewModel.selectedPort == port {
+                            viewModel.prepareForAutoScan()
+                        }
+                        viewModel.removeAutoScanResult(for: port)
                         settings.removeRecentPort(port)
                     }
                 }
@@ -775,10 +804,11 @@ struct ContentView: View {
 
 /// A tag/chip displaying a recently queried port number.
 ///
-/// - Tap: Triggers `onClick` to scan the port.
+/// - Tap: Triggers `onClick` to scan the port, or deselect if already selected.
 /// - Hover: Shows a delete button (×) that triggers `onDelete`.
 struct RecentPortTag: View {
     let port: Int
+    let isSelected: Bool
     let onClick: () -> Void
     let onDelete: () -> Void
 
@@ -790,13 +820,14 @@ struct RecentPortTag: View {
             // (e.g., "5,801" with thousands separator in some locales).
             Text(String(port))
                 .font(.caption2)
-                .fontWeight(.medium)
+                .fontWeight(isSelected ? .bold : .medium)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
 
             if isHovered {
                 Button(action: onDelete) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.caption2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.9) : .red)
                 }
                 .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
@@ -805,9 +836,11 @@ struct RecentPortTag: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(
-            isHovered
-                ? Color.accentColor.opacity(0.2)
-                : Color.accentColor.opacity(0.1)
+            isSelected
+                ? Color.accentColor
+                : (isHovered
+                    ? Color.accentColor.opacity(0.2)
+                    : Color.accentColor.opacity(0.1))
         )
         .clipShape(Capsule())
         .onHover { hovering in
@@ -818,7 +851,7 @@ struct RecentPortTag: View {
         .onTapGesture {
             onClick()
         }
-        .help("点击查询端口 " + String(port))
+        .help(isSelected ? "点击取消选中" : "点击查询端口 " + String(port))
     }
 }
 

@@ -53,7 +53,7 @@ final class StatusBarController: NSObject {
         popover = NSPopover()
         // Initial size; will be dynamically adjusted via popoverContentHeightChanged
         // notifications from ContentView based on actual content.
-        popover.contentSize = NSSize(width: 380, height: 260)
+        popover.contentSize = NSSize(width: 380, height: 360)
         popover.behavior = .transient // Close when clicking outside.
         popover.delegate = self
 
