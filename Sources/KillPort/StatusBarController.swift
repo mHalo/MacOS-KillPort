@@ -110,10 +110,13 @@ final class StatusBarController: NSObject {
     /// Shows the about panel.
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
+
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+
         NSApp.orderFrontStandardAboutPanel(
             options: [
                 .applicationName: "KillPort",
-                .applicationVersion: "1.0.0",
+                .applicationVersion: appVersion,
                 .credits: NSAttributedString(
                     string: "macOS 菜单栏端口管理工具",
                     attributes: [.font: NSFont.systemFont(ofSize: 11)]

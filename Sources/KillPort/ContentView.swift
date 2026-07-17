@@ -222,6 +222,11 @@ struct ContentView: View {
 
     // MARK: - Header
 
+    /// Reads the app marketing version from the bundle's Info.plist.
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+    }
+
     private var headerView: some View {
         HStack(spacing: 10) {
             Image(systemName: "antenna.radiowaves.left.and.right")
@@ -239,7 +244,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text("v1.0.0")
+            Text("v\(appVersion)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
