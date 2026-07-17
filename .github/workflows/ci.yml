@@ -35,4 +35,25 @@ jobs:
         run: swift build -c release --disable-sandbox
 
       - name: Run tests
-        run: swift test --parallel
+        run: |
+          # Start a test server for port scanning tests
+          python3 -m http.server 18923 &
+          SERVER_PID=$!
+          sleep 1
+
+          # Compile custom test suite (exclude KillPortApp.swift which has @main)
+          swiftc Sources/KillPort/Models.swift \
+                 Sources/KillPort/PortScanner.swift \
+                 Sources/KillPort/ProcessKiller.swift \
+                 Tests/KillPortTests/main.swift \
+                 -o /tmp/KillPortTests \
+                 -framework AppKit -framework SwiftUI \
+                 -parse-as-library
+
+          # Run tests
+          /tmp/KillPortTests
+          TEST_EXIT=$?
+
+          # Cleanup
+          kill $SERVER_PID 2>/dev/null || true
+          exit $TEST_EXIT
